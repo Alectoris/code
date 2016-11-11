@@ -13,8 +13,13 @@
 // File includes:
 #include "ARPipeline.hpp"
 
-ARPipeline::ARPipeline()
+#include <numeric>
+
+ARPipeline::ARPipeline(const CameraCalibration& camera)
+	: mMinNumberTrackedPoints(16)
+	, mMinNumberPoseInliers(8)
 {
+	mCameraCalibartion = camera;
 	mFeatureExtractor = cv::AKAZE::create();
 	mFeatureMatcher = cv::BFMatcher::create("BruteForce-Hamming");
 }
@@ -27,21 +32,51 @@ void ARPipeline::setTemplateFromImage(const cv::Mat& referenceImage)
 
 bool ARPipeline::buildTemplateFromImage(ImageTemplate& tmpl, const cv::Mat& referenceImage) const
 {
-	cv::cvtColor(referenceImage, tmpl.grayscaleImage, cv::COLOR_BGR2GRAY);
-	tmpl.frameSize = referenceImage.size();
-	mFeatureExtractor->detectAndCompute(tmpl.grayscaleImage, cv::noArray(), tmpl.keypoints, tmpl.descriptors);
-	return tmpl.keypoints.size() > 0;
+	cv::cvtColor(referenceImage, tmpl.grayImg, cv::COLOR_BGR2GRAY);
+	tmpl.size = referenceImage.size();
+
+	// Build 2d and 3d contours (3d contour lie in XY plane since it's planar)
+	tmpl.points2d.resize(4);
+	tmpl.points3d.resize(4);
+
+	// Image dimensions
+	const float w = referenceImage.cols;
+	const float h = referenceImage.rows;
+
+	// Normalized dimensions:
+	const float maxSize = std::max(w, h);
+	const float unitW = w / maxSize;
+	const float unitH = h / maxSize;
+
+	tmpl.points2d[0] = cv::Point2f(0, 0);
+	tmpl.points2d[1] = cv::Point2f(w, 0);
+	tmpl.points2d[2] = cv::Point2f(w, h);
+	tmpl.points2d[3] = cv::Point2f(0, h);
+
+	tmpl.points3d[0] = cv::Point3f(-unitW, -unitH, 0);
+	tmpl.points3d[1] = cv::Point3f(unitW, -unitH, 0);
+	tmpl.points3d[2] = cv::Point3f(unitW, unitH, 0);
+	tmpl.points3d[3] = cv::Point3f(-unitW, unitH, 0);
+
+	// Compute feature points for template matching
+	mFeatureExtractor->detectAndCompute(tmpl.grayImg, cv::noArray(), tmpl.keypoints, tmpl.descriptors);
+
+	// Compute points for tracking
+	cv::goodFeaturesToTrack(tmpl.grayImg, tmpl.pointsForTracking, 100, 0.01, 10, cv::noArray(), 5, true);
+
+	return tmpl.keypoints.size() > mMinNumberTrackedPoints &&
+		tmpl.pointsForTracking.size() > mMinNumberTrackedPoints;
 }
 
-bool ARPipeline::matchTemplate(const cv::Mat& inspectionImage, const ImageTemplate& tmpl)
+bool ARPipeline::matchTemplate(const cv::Mat& inspectionImage)
 {
 	/// Detect keypoints and extract descriptors from the image
-	cv::cvtColor(inspectionImage, mInspectionImageGray, cv::COLOR_BGR2GRAY);
-	mFeatureExtractor->detectAndCompute(mInspectionImageGray, cv::noArray(), mInspectionKeypoints, mInspectionDescriptors);
+	cv::cvtColor(inspectionImage, mCurrInspectionImageGray, cv::COLOR_BGR2GRAY);
+	mFeatureExtractor->detectAndCompute(mCurrInspectionImageGray, cv::noArray(), mInspectionKeypoints, mInspectionDescriptors);
 
 	/// Match observed descriptors with descriptors from template to obtain matches
 	std::vector<cv::DMatch> matches;
-	mFeatureMatcher->match(mInspectionDescriptors, tmpl.descriptors, matches);
+	mFeatureMatcher->match(mInspectionDescriptors, mTemplate.descriptors, matches);
 
 	if (matches.size() < 8)
 	{
@@ -52,66 +87,74 @@ bool ARPipeline::matchTemplate(const cv::Mat& inspectionImage, const ImageTempla
 	std::vector<cv::Point2f> referencePoints(matches.size()), inspectionPoints(matches.size());
 	for (size_t i = 0; i < matches.size(); i++)
 	{
-		referencePoints[i] = tmpl.keypoints[matches[i].trainIdx].pt;
-		inspectionPoints[i] = tmpl.keypoints[matches[i].queryIdx].pt;
+		referencePoints[i] = mTemplate.keypoints[matches[i].trainIdx].pt;
+		inspectionPoints[i] = mInspectionKeypoints[matches[i].queryIdx].pt;
 	}
 
-	mTrackStatus.currInspectionPose = cv::findHomography(referencePoints, inspectionPoints, cv::RANSAC, 3, mTrackStatus.inliersMask);
-	size_t numInliers = std::count(inliersMask.begin(), inliersMask.end(), 1);
+	mTrackStatus.currInspectionH = cv::findHomography(referencePoints, inspectionPoints, cv::RANSAC, 3, mTrackStatus.inliersMask);
+	size_t numInliers = std::count(mTrackStatus.inliersMask.begin(), mTrackStatus.inliersMask.end(), 1);
 	if (numInliers < mMinNumberPoseInliers)
 	{
 		mTrackStatus.isValid = false;
 		return false;
 	}
 
-	mTrackStatus.isValid = checkHomographyValid(h);
+	mTrackStatus.isValid = checkHomographyValid(mTrackStatus.currInspectionH);
+
+	if (mTrackStatus.isValid)
+	{
+		// Initialize the points for tracking
+		cv::perspectiveTransform(mTemplate.pointsForTracking, mTrackStatus.prevInspectionPoints, mTrackStatus.currInspectionH);
+	}
 	return mTrackStatus.isValid;
 }
 
-bool ARPipeline::trackTemplate(const cv::Mat& inspectionImage, const ImageTemplate& tmpl)
+bool ARPipeline::trackTemplate(const cv::Mat& inspectionImage)
 {
-	cv::cvtColor(inspectionImage, mInspectionImageGray, cv::COLOR_BGR2GRAY);
+	mCurrInspectionImageGray.copyTo(mPrevInspectionImageGray);
+	cv::cvtColor(inspectionImage, mCurrInspectionImageGray, cv::COLOR_BGR2GRAY);
 
 	if (mTrackStatus.isValid)
 	{
 		/// KLT tracking
-		{
-			cv::calcOpticalFlowPyrLK(mPrevInspectionImage,
-				mInspectionImageGray,
+		{			cv::calcOpticalFlowPyrLK(
+				mPrevInspectionImageGray,
+				mCurrInspectionImageGray,
 				mTrackStatus.prevInspectionPoints,
 				mTrackStatus.currInspectionPoints,
 				mTrackStatus.inliersMask,
-				cv::noArray());
-			size_t trackedPoints = std::count(inliersMask.begin(), inliersMask.end(), 1);
-			mTrackStatus.isValid = ttrackedPoints >= mMinNumberTrackedPoints;
+				cv::noArray(),
+				cv::Size(13, 13),
+				3);
+			size_t trackedPoints = std::count(mTrackStatus.inliersMask.begin(), mTrackStatus.inliersMask.end(), 1);
+			mTrackStatus.isValid = trackedPoints >= mMinNumberTrackedPoints;
 		}
-
-		/// TM tracking
-		/*
-		{
-		cv::warpPerspective(tmpl.grayscaleImage, expectedImage, mTrackStatus.currInspectionPose, inspectionImage.size());
-		cv::perspectiveTransform(tmpl.referencePoints, expectedPoints, mTrackStatus.currInspectionPose);
-
-		for (int i = 0; i < expectedPoints.size(); i++)
-		{
-		cv::Mat patch = expectedImage();
-		cv::matchTemplate(expectedImage, inspectionImage, );
-		}
-		}*/
 	}
+
+	cv::Mat hdelta;
 
 	if (mTrackStatus.isValid)
 	{
-		cv::Mat hdelta = cv::findHomography(mTrackStatus.prevInspectionPoints, mTrackStatus.currInspectionPoints, cv::RANSAC, 3, mTrackStatus.inliersMask);
+		std::vector<cv::Point2f> prevInspectionPoints;
+		std::vector<cv::Point2f> currInspectionPoints;
+		for (int i = 0; i < mTrackStatus.inliersMask.size(); i++)
+		{
+			if (mTrackStatus.inliersMask[i])
+			{
+				prevInspectionPoints.push_back(mTrackStatus.prevInspectionPoints[i]);
+				currInspectionPoints.push_back(mTrackStatus.currInspectionPoints[i]);
+			}
+		}
+
+		hdelta = cv::findHomography(prevInspectionPoints, currInspectionPoints, cv::RANSAC, 3, mTrackStatus.inliersMask);
 		size_t numInliers = std::count(mTrackStatus.inliersMask.begin(), mTrackStatus.inliersMask.end(), 1);
 		mTrackStatus.isValid = numInliers >= mMinNumberPoseInliers;
 	}
 
 	if (mTrackStatus.isValid)
 	{
-		std::swap(mTrackStatus.mCurrInspectionPoints, mTrackStatus.prevInspectionPoints);
-		mTrackStatus.currInspectionPose = mTrackStatus.currInspectionPose * hdelta;
-		mTrackStatus.isValid = checkHomographyValid(mTrackStatus.currInspectionPose);
+		mTrackStatus.currInspectionH = mTrackStatus.currInspectionH * hdelta;
+		mTrackStatus.isValid = checkHomographyValid(mTrackStatus.currInspectionH);
 	}
 
 	/// Refine a pose using image registration
@@ -120,10 +163,17 @@ bool ARPipeline::trackTemplate(const cv::Mat& inspectionImage, const ImageTempla
 		try
 		{
 			cv::TermCriteria criteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, mMaxIterationsECC, mTerminationEpsECC);
-			cv::findTransformECC(tmpl.grayscaleImage, mInspectionImageGray, mTrackStatus.currInspectionPose, cv::MOTION_HOMOGRAPHY, criteria);
-			mTrackStatus.isValid = checkHomographyValid(mTrackStatus.currInspectionPose);
+
+			cv::Mat h;
+			mTrackStatus.currInspectionH.convertTo(h, CV_32F);
+			cv::findTransformECC(mTemplate.grayImg, mCurrInspectionImageGray, h, cv::MOTION_HOMOGRAPHY, criteria);
+			h.convertTo(mTrackStatus.currInspectionH, mTrackStatus.currInspectionH.type());
+
+			cv::perspectiveTransform(mTemplate.pointsForTracking, mTrackStatus.prevInspectionPoints, mTrackStatus.currInspectionH);
+
+			mTrackStatus.isValid = checkHomographyValid(mTrackStatus.currInspectionH);
 		}
-		catch (cv::Exception)
+		catch (cv::Exception& e)
 		{
 			mTrackStatus.isValid = false;
 		}
@@ -132,41 +182,13 @@ bool ARPipeline::trackTemplate(const cv::Mat& inspectionImage, const ImageTempla
 	return mTrackStatus.isValid;
 }
 
-const cv::Mat& ARPipeline::getPose() const
-{
-	std::vector<cv::Point2f> corners2d;
-	cv::perspectiveTransform(tmpl.corners2d, corners2d, mTrackStatus.currInspectionPose);
-
-	cv::Mat Rvec;
-	cv::Mat_<float> Tvec;
-	cv::Mat raux, taux;
-
-	cv::solvePnP(tmpl.corners3d, corners2d, camMatrix, distCoeff, raux, taux);
-	raux.convertTo(Rvec, CV_32F);
-	taux.convertTo(Tvec, CV_32F);
-
-	cv::Mat_<float> rotMat(3, 3);
-	cv::Rodrigues(Rvec, rotMat);
-
-	// Copy to transformation matrix
-	for (int col = 0; col<3; col++)
-	{
-		for (int row = 0; row<3; row++)
-		{
-			m.transformation.r().mat[row][col] = rotMat(row, col); // Copy rotation component
-		}
-		m.transformation.t().data[col] = Tvec(col); // Copy translation component
-	}
-
-	return mTrackStatus.currInspectionPose;
-}
 
 bool ARPipeline::checkHomographyValid(const cv::Mat& h) const
 {
 	assert(h.rows == 3);
 	assert(h.cols == 3);
 
-	if (std::abs(h.det()) > 10000)
+	if (std::abs(cv::determinant(h)) > 10000)
 	{
 		return false;
 	}

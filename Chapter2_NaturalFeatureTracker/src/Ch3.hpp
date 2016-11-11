@@ -1,27 +1,6 @@
 #pragma once
 
-struct ImageTemplate
-{
-	cv::Mat                   grayscaleImage;
-	cv::Size 				  frameSize;
-	std::vector<cv::KeyPoint> keypoints;
-	cv::Mat 				  descriptors;	
-};
 
-struct TrackStatus
-{
-    bool    isValid;
-
-    std::vector<uint8_t>        inliersMask;
-    std::vector<cv::Point2f>    prevInspectionPoints;
-    std::vector<cv::Point2f>    currInspectionPoints;
-
-    cv::Mat prevInspectionImage;
-
-    cv::Mat currInspectionPose;
-    cv::Mat prevInspectionPose;
-
-};
 
 class NFTPipeline
 {

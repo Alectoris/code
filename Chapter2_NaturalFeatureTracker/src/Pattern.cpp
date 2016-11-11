@@ -13,13 +13,16 @@
 // File includes:
 #include "Pattern.hpp"
 
-void PatternTrackingInfo::computePose(const Pattern& pattern, const CameraCalibration& calibration)
+void Pattern::computePose(Transformation& pose3d, const cv::Mat& h, const CameraCalibration& calibration) const
 {
 	cv::Mat Rvec;
 	cv::Mat_<float> Tvec;
 	cv::Mat raux, taux;
 
-	cv::solvePnP(pattern.points3d, points2d, calibration.getIntrinsic(), calibration.getDistorsion(), raux, taux);
+	std::vector<cv::Point2f> observed2d;
+	cv::perspectiveTransform(points2d, observed2d, h);
+
+	cv::solvePnP(points3d, observed2d, calibration.getIntrinsic(), calibration.getDistorsion(), raux, taux);
 	raux.convertTo(Rvec, CV_32F);
 	taux.convertTo(Tvec, CV_32F);
 
@@ -31,9 +34,9 @@ void PatternTrackingInfo::computePose(const Pattern& pattern, const CameraCalibr
 	{
 		for (int row = 0; row < 3; row++)
 		{
-			pose3d.r().mat[row][col] = rotMat(row, col); // Copy rotation component
+			pose3d.r()(row,col) = rotMat(row, col); // Copy rotation component
 		}
-		pose3d.t().data[col] = Tvec(col); // Copy translation component
+		pose3d.t()(col) = Tvec(col); // Copy translation component
 	}
 
 	// Since solvePnP finds camera location, w.r.t to marker pose, to get marker pose w.r.t to the camera we invert it.

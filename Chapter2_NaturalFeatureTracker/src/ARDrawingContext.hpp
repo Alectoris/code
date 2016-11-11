@@ -29,12 +29,10 @@ public:
 	~ARDrawingContext();
 
 
-	bool                isPatternPresent;
-	Transformation      patternPose;
-
-
 	//! Set the new frame for the background
 	void updateBackground(const cv::Mat& frame);
+
+	void renderCube(bool is_tracking, const Transformation& t);
 
 	void updateWindow();
 
@@ -64,5 +62,7 @@ private:
 	CameraCalibration  m_calibration;
 	cv::Mat            m_backgroundImage;
 	std::string        m_windowName;
+	bool mTargetPresent;
+	Transformation mTargetPose;
 };
 

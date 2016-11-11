@@ -18,35 +18,25 @@
 #include "GeometryTypes.hpp"
 
 #include <opencv2/opencv.hpp>
-#include <wincon.h>
 
-struct ImageTemplate
-{
-	cv::Mat                   grayscaleImage;
-	cv::Size 				  frameSize;
-	std::vector<cv::KeyPoint> keypoints;
-	cv::Mat 				  descriptors;
-};
+// Alias. TODO: Delete me
+using ImageTemplate = Pattern;
 
 struct TrackStatus
 {
-	bool    isValid = IClassFactory_LockServer_Stub;
+	bool    isValid = false;
 
 	std::vector<uint8_t>        inliersMask;
 	std::vector<cv::Point2f>    prevInspectionPoints;
 	std::vector<cv::Point2f>    currInspectionPoints;
 
-	cv::Mat prevInspectionImage;
-
-	cv::Mat currInspectionPose;
-	cv::Mat prevInspectionPose;
-
+	cv::Mat currInspectionH;
 };
 
 class ARPipeline
 {
 public:
-	ARPipeline();
+	ARPipeline(const CameraCalibration& camera);
 
 	///
 	/// @brief Builds a ImageTemplate from the image frame.
@@ -59,23 +49,20 @@ public:
 	/// @inspectionImage - Current image
 	/// @tmpl - Template data for the tracking
 	///
-	bool matchTemplate(const cv::Mat& inspectionImage, const ImageTemplate& tmpl);
+	bool matchTemplate(const cv::Mat& inspectionImage);
 
 	///
 	/// @brief Tries to track image template from previous to current (inspection) frame.
 	///
-	bool trackTemplate(const cv::Mat& inspectionImage, const ImageTemplate& tmpl);
+	bool trackTemplate(const cv::Mat& inspectionImage);
 
-
-	///
-	/// @brief Returns last known pose
-	///
-	Transformation getPose() const;
-
+	const ImageTemplate& getTemplate()  const { return mTemplate; }
+	const TrackStatus& getTrackStatus() const { return mTrackStatus; }
 
 protected:
 	cv::Ptr<cv::Feature2D>         mFeatureExtractor;
 	cv::Ptr<cv::DescriptorMatcher> mFeatureMatcher;
+	CameraCalibration			   mCameraCalibartion;
 
 	bool checkHomographyValid(const cv::Mat& h) const;
 
@@ -85,7 +72,9 @@ protected:
 	bool buildTemplateFromImage(ImageTemplate& tmpl, const cv::Mat& referenceImage) const;
 
 private:
-	cv::Mat                     mInspectionImageGray;
+	cv::Mat                     mCurrInspectionImageGray;
+	cv::Mat                     mPrevInspectionImageGray;
+
 	std::vector<cv::KeyPoint>   mInspectionKeypoints;
 	cv::Mat                     mInspectionDescriptors;
 
@@ -94,6 +83,6 @@ private:
 
 	size_t mMinNumberTrackedPoints;
 	size_t mMinNumberPoseInliers;
-	size_t mMaxIterationsECC = 5000;
-	double mTerminationEpsECC = 1e-10;
+	size_t mMaxIterationsECC = 10;
+	double mTerminationEpsECC = 1e-3;
 };

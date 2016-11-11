@@ -26,13 +26,6 @@
 void processVideo(const cv::Mat& patternImage, CameraCalibration& calibration, cv::VideoCapture& capture);
 
 /**
- * Processes single image. The processing goes in a loop.
- * It allows you to control the detection process by adjusting homography refinement switch and 
- * reprojection threshold in runtime.
- */
-void processSingleImage(const cv::Mat& patternImage, CameraCalibration& calibration, const cv::Mat& image);
-
-/**
  * Performs full detection routine on camera frame and draws the scene using drawing context.
  * In addition, this function draw overlay with debug information on top of the AR window.
  * Returns true if processing loop should be stopped; otherwise - false.
@@ -64,23 +57,13 @@ int main(int argc, const char * argv[])
 		cv::VideoCapture cap(0);
         processVideo(patternImage, calibration, cap);
     }
-    else if (argc == 3)
-    {
-        std::string input = argv[2];
-        cv::Mat testImage = cv::imread(input);
-        if (!testImage.empty())
-        {
-            processSingleImage(patternImage, calibration, testImage);
-        }
-        else 
-        {
-            cv::VideoCapture cap;
-            if (cap.open(input))
-            {
-                processVideo(patternImage, calibration, cap);
-            }
-        }
-    }
+	if (argc == 3)
+	{
+		cv::VideoCapture cap;
+		cv::String filename = argv[2];
+		cap.open(filename);
+		processVideo(patternImage, calibration, cap);
+	}
     else
     {
         std::cerr << "Invalid number of arguments passed" << std::endl;
@@ -105,35 +88,42 @@ void processVideo(const cv::Mat& patternImage, CameraCalibration& calibration, c
 
     cv::Size frameSize(currentFrame.cols, currentFrame.rows);
 
-    ARPipeline pipeline(patternImage, calibration);
-    ARDrawingContext drawingCtx("Markerless AR", frameSize, calibration);
+	ARPipeline pipeline(calibration);
+	pipeline.setTemplateFromImage(patternImage);
+	
+    ARDrawingContext renderPipeline("Markerless AR", frameSize, calibration);
 
     bool shouldQuit = false;
-    do
+	bool isTracking = false;
+	Transformation t;
+
+	do
     {
         capture >> currentFrame;
         if (currentFrame.empty())
         {
             shouldQuit = true;
-            continue;
+            break;
         }
 
-        shouldQuit = processFrame(currentFrame, pipeline, drawingCtx);
+		renderPipeline.updateBackground(currentFrame);
+
+		if (isTracking)
+		{
+			isTracking = pipeline.trackTemplate(currentFrame);
+		}
+		else
+		{
+			isTracking = pipeline.matchTemplate(currentFrame);
+		}
+
+		pipeline.getTemplate().computePose(t, pipeline.getTrackStatus().currInspectionH, calibration);
+		renderPipeline.renderCube(isTracking, t);
+		cv::waitKey(1);
+
     } while (!shouldQuit);
 }
 
-void processSingleImage(const cv::Mat& patternImage, CameraCalibration& calibration, const cv::Mat& image)
-{
-    cv::Size frameSize(image.cols, image.rows);
-    ARPipeline pipeline(patternImage, calibration);
-    ARDrawingContext drawingCtx("Markerless AR", frameSize, calibration);
-
-    bool shouldQuit = false;
-    do
-    {
-        shouldQuit = processFrame(image, pipeline, drawingCtx);
-    } while (!shouldQuit);
-}
 
 bool processFrame(const cv::Mat& cameraFrame, ARPipeline& pipeline, ARDrawingContext& drawingCtx)
 {
@@ -141,21 +131,24 @@ bool processFrame(const cv::Mat& cameraFrame, ARPipeline& pipeline, ARDrawingCon
     cv::Mat img = cameraFrame.clone();
 
     // Draw information:
-    if (pipeline.m_patternDetector.enableHomographyRefinement)
-        cv::putText(img, "Pose refinement: On   ('h' to switch off)", cv::Point(10,15), CV_FONT_HERSHEY_PLAIN, 1, CV_RGB(0,200,0));
-    else
-        cv::putText(img, "Pose refinement: Off  ('h' to switch on)",  cv::Point(10,15), CV_FONT_HERSHEY_PLAIN, 1, CV_RGB(0,200,0));
+    //if (pipeline.m_patternDetector.enableHomographyRefinement)
+    //    cv::putText(img, "Pose refinement: On   ('h' to switch off)", cv::Point(10,15), CV_FONT_HERSHEY_PLAIN, 1, CV_RGB(0,200,0));
+    //else
+    //    cv::putText(img, "Pose refinement: Off  ('h' to switch on)",  cv::Point(10,15), CV_FONT_HERSHEY_PLAIN, 1, CV_RGB(0,200,0));
 
-    cv::putText(img, "RANSAC threshold: " + ToString(pipeline.m_patternDetector.homographyReprojectionThreshold) + "( Use'-'/'+' to adjust)", cv::Point(10, 30), CV_FONT_HERSHEY_PLAIN, 1, CV_RGB(0,200,0));
+    //cv::putText(img, "RANSAC threshold: " + ToString(pipeline.m_patternDetector.homographyReprojectionThreshold) + "( Use'-'/'+' to adjust)", cv::Point(10, 30), CV_FONT_HERSHEY_PLAIN, 1, CV_RGB(0,200,0));
+	
 
     // Set a new camera frame:
     drawingCtx.updateBackground(img);
 
+	
+
     // Find a pattern and update it's detection status:
-    drawingCtx.isPatternPresent = pipeline.processFrame(cameraFrame);
+    //drawingCtx.isPatternPresent = pipeline.processFrame(cameraFrame);
 
     // Update a pattern pose:
-    drawingCtx.patternPose = pipeline.getPatternLocation();
+    //drawingCtx.patternPose = pipeline.getTrackStatus().getPose();
 
     // Request redraw of the window:
     drawingCtx.updateWindow();
@@ -166,17 +159,17 @@ bool processFrame(const cv::Mat& cameraFrame, ARPipeline& pipeline, ARDrawingCon
     bool shouldQuit = false;
     if (keyCode == '+' || keyCode == '=')
     {
-        pipeline.m_patternDetector.homographyReprojectionThreshold += 0.2f;
-        pipeline.m_patternDetector.homographyReprojectionThreshold = std::min(10.0f, pipeline.m_patternDetector.homographyReprojectionThreshold);
+        //pipeline.m_patternDetector.homographyReprojectionThreshold += 0.2f;
+        //pipeline.m_patternDetector.homographyReprojectionThreshold = std::min(10.0f, pipeline.m_patternDetector.homographyReprojectionThreshold);
     }
     else if (keyCode == '-')
     {
-        pipeline.m_patternDetector.homographyReprojectionThreshold -= 0.2f;
-        pipeline.m_patternDetector.homographyReprojectionThreshold = std::max(0.0f, pipeline.m_patternDetector.homographyReprojectionThreshold);
+        //pipeline.m_patternDetector.homographyReprojectionThreshold -= 0.2f;
+        //pipeline.m_patternDetector.homographyReprojectionThreshold = std::max(0.0f, pipeline.m_patternDetector.homographyReprojectionThreshold);
     }
     else if (keyCode == 'h')
     {
-        pipeline.m_patternDetector.enableHomographyRefinement = !pipeline.m_patternDetector.enableHomographyRefinement;
+        //pipeline.m_patternDetector.enableHomographyRefinement = !pipeline.m_patternDetector.enableHomographyRefinement;
     }
     else if (keyCode == 27 || keyCode == 'q')
     {

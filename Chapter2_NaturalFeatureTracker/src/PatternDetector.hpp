@@ -87,10 +87,3 @@ private:
     cv::Ptr<cv::Feature2D>           m_detector;
     cv::Ptr<cv::DescriptorMatcher>   m_matcher;
 };
-
-
-class PoseSmoothingAlgorithm
-{
-public:
-	virtual ~PoseSmoothingAlgorithm() = default;
-};

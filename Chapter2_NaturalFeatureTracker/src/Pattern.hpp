@@ -33,6 +33,9 @@ struct Pattern
 
 	std::vector<cv::Point2f>  points2d;
 	std::vector<cv::Point3f>  points3d;
+	std::vector<cv::Point2f>  pointsForTracking;
+
+	void computePose(Transformation& t, const cv::Mat& h, const CameraCalibration& calibration) const;
 };
 
 /**
@@ -49,9 +52,6 @@ struct PatternTrackingInfo
 	/// Computed rigid transformation
 	Transformation            pose3d;
 
-	void draw2dContour(cv::Mat& image, cv::Scalar color) const;
-
-	/// Compute pattern pose using PnP algorithm
-	void computePose(const Pattern& pattern, const CameraCalibration& calibration);
+	void draw2dContour(cv::Mat& image, cv::Scalar color) const;	
 };
 

@@ -56,6 +56,14 @@ void ARDrawingContext::updateBackground(const cv::Mat& frame)
 	frame.copyTo(m_backgroundImage);
 }
 
+void ARDrawingContext::renderCube(bool is_tracking, const Transformation& t)
+{
+	mTargetPresent = is_tracking;
+	mTargetPose = t;
+
+	updateWindow();
+}
+
 void ARDrawingContext::updateWindow()
 {
 	cv::updateWindow(m_windowName);
@@ -135,16 +143,16 @@ void ARDrawingContext::drawAugmentedScene()
 	buildProjectionMatrix(m_calibration, w, h, projectionMatrix);
 
 	glMatrixMode(GL_PROJECTION);
-	glLoadMatrixf(projectionMatrix.data);
+	glLoadMatrixf(projectionMatrix.val);
 
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 
-	if (isPatternPresent)
+	if (mTargetPresent)
 	{
 		// Set the pattern transformation
-		Matrix44 glMatrix = patternPose.getMat44();
-		glLoadMatrixf(reinterpret_cast<const GLfloat*>(&glMatrix.data[0]));
+		Matrix44 glMatrix = mTargetPose.getMat44();
+		glLoadMatrixf(reinterpret_cast<const GLfloat*>(&glMatrix.val));
 
 		// Render model
 		drawCoordinateAxis();
@@ -163,25 +171,25 @@ void ARDrawingContext::buildProjectionMatrix(const CameraCalibration& calibratio
 	float c_x = calibration.cx(); // Camera primary point x
 	float c_y = calibration.cy(); // Camera primary point y
 
-	projectionMatrix.data[0] = -2.0f * f_x / screen_width;
-	projectionMatrix.data[1] = 0.0f;
-	projectionMatrix.data[2] = 0.0f;
-	projectionMatrix.data[3] = 0.0f;
+	projectionMatrix.val[0] = -2.0f * f_x / screen_width;
+	projectionMatrix.val[1] = 0.0f;
+	projectionMatrix.val[2] = 0.0f;
+	projectionMatrix.val[3] = 0.0f;
 
-	projectionMatrix.data[4] = 0.0f;
-	projectionMatrix.data[5] = 2.0f * f_y / screen_height;
-	projectionMatrix.data[6] = 0.0f;
-	projectionMatrix.data[7] = 0.0f;
+	projectionMatrix.val[4] = 0.0f;
+	projectionMatrix.val[5] = 2.0f * f_y / screen_height;
+	projectionMatrix.val[6] = 0.0f;
+	projectionMatrix.val[7] = 0.0f;
 
-	projectionMatrix.data[8] = 2.0f * c_x / screen_width - 1.0f;
-	projectionMatrix.data[9] = 2.0f * c_y / screen_height - 1.0f;
-	projectionMatrix.data[10] = -(farPlane + nearPlane) / (farPlane - nearPlane);
-	projectionMatrix.data[11] = -1.0f;
+	projectionMatrix.val[8] = 2.0f * c_x / screen_width - 1.0f;
+	projectionMatrix.val[9] = 2.0f * c_y / screen_height - 1.0f;
+	projectionMatrix.val[10] = -(farPlane + nearPlane) / (farPlane - nearPlane);
+	projectionMatrix.val[11] = -1.0f;
 
-	projectionMatrix.data[12] = 0.0f;
-	projectionMatrix.data[13] = 0.0f;
-	projectionMatrix.data[14] = -2.0f * farPlane * nearPlane / (farPlane - nearPlane);
-	projectionMatrix.data[15] = 0.0f;
+	projectionMatrix.val[12] = 0.0f;
+	projectionMatrix.val[13] = 0.0f;
+	projectionMatrix.val[14] = -2.0f * farPlane * nearPlane / (farPlane - nearPlane);
+	projectionMatrix.val[15] = 0.0f;
 }
 
 
